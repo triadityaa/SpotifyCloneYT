@@ -87,11 +87,44 @@ wait_for() {
 }
 
 wait_for "the emulator booted" is_booted 900
-wait_for "system services were ready" is_ready 300
-# Check again after a pause to ride out a system_server restart right after boot.
-sleep 15
-wait_for "system services were ready (second check)" is_ready 300
-echo "Emulator booted: Android $("$ADB" shell getprop ro.build.version.release | tr -d '\r')" \
+
+system_server_pid() {
+  timeout 30 "$ADB" shell pidof system_server 2>/dev/null | tr -d '\r'
+}
+
+# The first boot of recent images (seen on API 37) can restart system_server after
+# sys.boot_completed is set, which makes APK installs fail with "Can't find service: package".
+# Wait until system_server keeps the same PID for 60 seconds with its services answering.
+wait_for_stable_system() {
+  local deadline=$((SECONDS + 600)) stable_since=$SECONDS last_pid="" pid
+  while true; do
+    pid=$(system_server_pid || true)
+    if [ -z "$pid" ] || [ "$pid" != "$last_pid" ] || ! is_ready; then
+      if [ -n "$last_pid" ] && [ -n "$pid" ] && [ "$pid" != "$last_pid" ]; then
+        echo "system_server restarted (pid $last_pid -> $pid)"
+      fi
+      last_pid=$pid
+      stable_since=$SECONDS
+    elif [ $((SECONDS - stable_since)) -ge 60 ]; then
+      echo "system_server is stable (pid $pid)"
+      return 0
+    fi
+    if ! kill -0 "$EMULATOR_PID" 2>/dev/null; then
+      echo "::error::The emulator exited while waiting for a stable system."
+      print_file emulator.log
+      exit 1
+    fi
+    if [ "$SECONDS" -ge "$deadline" ]; then
+      echo "::error::system_server did not stay up for 60 seconds within 10 minutes."
+      print_file emulator.log
+      exit 1
+    fi
+    sleep 5
+  done
+}
+
+wait_for_stable_system
+echo "Emulator ready: Android $("$ADB" shell getprop ro.build.version.release | tr -d '\r')" \
   "(API $("$ADB" shell getprop ro.build.version.sdk | tr -d '\r'))"
 "$ADB" shell df -h /data || true
 
@@ -104,15 +137,10 @@ echo "Emulator booted: Android $("$ADB" shell getprop ro.build.version.release |
 "$ADB" logcat > logcat.txt 2>&1 &
 LOGCAT_PID=$!
 
-set +e
-timeout 1800 ./gradlew --stacktrace connectedDebugAndroidTest
-RESULT=$?
-set -e
-
-kill "$LOGCAT_PID" 2>/dev/null || true
-
-# The Gradle task can succeed even when the APKs could not be installed, so require results.
-if ! python3 - <<'EOF'
+# Prints a summary of the result XML. Exit status: 0 all passed, 1 a test failed, 2 none ran.
+# Needed because the Gradle task can succeed even when the APKs could not be installed.
+check_results() {
+  python3 - <<'EOF'
 import glob, sys, xml.etree.ElementTree as ET
 
 cases = {}
@@ -125,20 +153,44 @@ failed = sorted(f"{cls}.{name}" for (cls, name), bad in cases.items() if bad)
 print(f"Instrumented tests: {len(cases)} run, {len(failed)} failed")
 for name in failed:
     print(f"  FAILED {name}")
-sys.exit(0 if cases and not failed else 1)
+sys.exit(2 if not cases else 1 if failed else 0)
 EOF
-then
-  echo "::error::Instrumented tests did not run or did not all pass."
-  RESULT=1
+}
+
+run_tests() {
+  rm -rf app/build/outputs/androidTest-results
+  set +e
+  timeout 1800 ./gradlew --stacktrace connectedDebugAndroidTest
+  GRADLE_STATUS=$?
+  check_results
+  RESULTS_STATUS=$?
+  set -e
+}
+
+run_tests
+# Retry once only when no test ran at all (the APKs could not be installed because
+# system_server restarted). A failing test is never retried.
+if [ "$RESULTS_STATUS" -eq 2 ]; then
+  echo "::warning::No instrumented test ran. Waiting for a stable system and retrying once."
+  wait_for_stable_system
+  run_tests
 fi
 
-if [ "$RESULT" -ne 0 ]; then
+kill "$LOGCAT_PID" 2>/dev/null || true
+
+RESULT=0
+if [ "$GRADLE_STATUS" -ne 0 ] || [ "$RESULTS_STATUS" -ne 0 ]; then
+  echo "::error::Instrumented tests did not run or did not all pass."
+  RESULT=1
   echo "::group::Test results"
   find app/build/outputs/androidTest-results -name '*.xml' -exec cat {} \; 2>/dev/null || true
   echo "::endgroup::"
-  echo "::group::Crashes and app log (logcat)"
-  grep -E "AndroidRuntime|FATAL EXCEPTION|spotifycloneyt|TestRunner|MediaSessionService" logcat.txt \
-    | tail -n 300 || true
+  echo "::group::Crashes, restarts and app log (logcat)"
+  grep -E "AndroidRuntime|FATAL EXCEPTION|Fatal signal|crash_dump|Watchdog|system_server|Zygote|lowmemorykiller|spotifycloneyt|TestRunner|MediaSessionService" \
+    logcat.txt | tail -n 300 || true
+  echo "::endgroup::"
+  echo "::group::Crash buffer (logcat -b crash)"
+  timeout 30 "$ADB" logcat -d -b crash 2>/dev/null | tail -n 200 || true
   echo "::endgroup::"
 fi
 
