@@ -23,7 +23,9 @@ class MainActivityTest {
     @Test
     fun launchesHomeScreen() {
         ActivityScenario.launch(MainActivity::class.java).use { scenario ->
-            onView(withId(R.id.navHostFragment)).check(matches(isDisplayed()))
+            // The song list is inside HomeFragment, so this also checks the NavHostFragment.
+            // (Matching R.id.navHostFragment is ambiguous: NavHostFragment gives its own
+            // container view the same id.)
             onView(withId(R.id.rvAllSongs)).check(matches(isDisplayed()))
             assertEquals(Lifecycle.State.RESUMED, scenario.state)
         }

@@ -40,7 +40,6 @@ set -o pipefail
 
 echo "::group::Emulator diagnostics"
 ls -l /dev/kvm || true
-"$EMULATOR" -version 2>&1 | head -n 3 || true
 "$EMULATOR" -accel-check 2>&1 || true
 "$EMULATOR" -list-avds 2>&1 || true
 df -h "$HOME" || true
@@ -51,21 +50,41 @@ echo "::endgroup::"
   > emulator.log 2>&1 &
 EMULATOR_PID=$!
 
-# Wait for the boot to complete, but fail fast if the emulator process exits.
-BOOT_DEADLINE=$((SECONDS + 900))
-until [ "$(timeout 30 "$ADB" shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" = 1 ]; do
-  if ! kill -0 "$EMULATOR_PID" 2>/dev/null; then
-    echo "::error::The emulator exited before it finished booting."
-    print_file emulator.log
-    exit 1
-  fi
-  if [ "$SECONDS" -ge "$BOOT_DEADLINE" ]; then
-    echo "::error::The emulator did not finish booting within 15 minutes."
-    print_file emulator.log
-    exit 1
-  fi
-  sleep 5
-done
+is_booted() {
+  [ "$(timeout 30 "$ADB" shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" = 1 ]
+}
+
+# sys.boot_completed can be set before system_server is fully up (or survive a runtime
+# restart), so also require the package and activity managers to answer.
+is_ready() {
+  is_booted &&
+    timeout 30 "$ADB" shell pm path android 2>/dev/null | grep -q '^package:' &&
+    timeout 30 "$ADB" shell am get-current-user 2>/dev/null | tr -d '\r' | grep -qE '^[0-9]+$'
+}
+
+# Polls the given check until it succeeds, failing fast if the emulator process exits.
+wait_for() {
+  local description="$1" check="$2" deadline=$((SECONDS + $3))
+  until "$check"; do
+    if ! kill -0 "$EMULATOR_PID" 2>/dev/null; then
+      echo "::error::The emulator exited while waiting until $description."
+      print_file emulator.log
+      exit 1
+    fi
+    if [ "$SECONDS" -ge "$deadline" ]; then
+      echo "::error::Timed out waiting until $description."
+      print_file emulator.log
+      exit 1
+    fi
+    sleep 5
+  done
+}
+
+wait_for "the emulator booted" is_booted 900
+wait_for "system services were ready" is_ready 300
+# Check again after a pause to ride out a system_server restart right after boot.
+sleep 15
+wait_for "system services were ready (second check)" is_ready 300
 echo "Emulator booted: Android $("$ADB" shell getprop ro.build.version.release | tr -d '\r')" \
   "(API $("$ADB" shell getprop ro.build.version.sdk | tr -d '\r'))"
 
@@ -84,6 +103,28 @@ RESULT=$?
 set -e
 
 kill "$LOGCAT_PID" 2>/dev/null || true
+
+# The Gradle task can succeed even when the APKs could not be installed, so require results.
+if ! python3 - <<'EOF'
+import glob, sys, xml.etree.ElementTree as ET
+
+cases = {}
+for path in glob.glob("app/build/outputs/androidTest-results/**/*.xml", recursive=True):
+    for case in ET.parse(path).getroot().iter("testcase"):
+        failed = case.find("failure") is not None or case.find("error") is not None
+        key = (case.get("classname"), case.get("name"))
+        cases[key] = cases.get(key, False) or failed
+failed = sorted(f"{cls}.{name}" for (cls, name), bad in cases.items() if bad)
+print(f"Instrumented tests: {len(cases)} run, {len(failed)} failed")
+for name in failed:
+    print(f"  FAILED {name}")
+sys.exit(0 if cases and not failed else 1)
+EOF
+then
+  echo "::error::Instrumented tests did not run or did not all pass."
+  RESULT=1
+fi
+
 if [ "$RESULT" -ne 0 ]; then
   echo "::group::Test results"
   find app/build/outputs/androidTest-results -name '*.xml' -exec cat {} \; 2>/dev/null || true
