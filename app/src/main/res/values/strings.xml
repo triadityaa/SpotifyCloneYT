@@ -1,3 +1,18 @@
 <resources>
-    <string name="app_name">SpotifyCloneYT</string>
+    <string name="app_name" translatable="false">SpotifyCloneYT</string>
+
+    <string name="retry">Retry</string>
+    <string name="no_songs">No songs found in the Firestore \"songs\" collection.</string>
+    <string name="error_firebase_not_configured">Firebase is not configured. Add app/google-services.json from the Firebase console and rebuild the app.</string>
+    <string name="error_permission_denied">Firestore denied access to the \"songs\" collection. Check your Firestore security rules.</string>
+    <string name="error_network">Could not reach Firebase. Check your internet connection.</string>
+    <string name="error_unknown">Something went wrong while loading the songs.</string>
+    <string name="error_playback">Playback error: %1$s</string>
+
+    <string name="song_title_with_artist">%1$s - %2$s</string>
+
+    <string name="content_description_song_image">Song cover</string>
+    <string name="content_description_play_pause">Play or pause</string>
+    <string name="content_description_skip_previous">Previous song</string>
+    <string name="content_description_skip_next">Next song</string>
 </resources>
