@@ -17,8 +17,8 @@ android {
 
     defaultConfig {
         applicationId = "com.plcoding.spotifycloneyt"
-        // Android 6.0+. Required by Media3, Firebase, Hilt and current AndroidX libraries.
-        minSdk = 23
+        // Android 7.0+. Navigation 2.10 requires API 24; Media3, Firebase and Hilt require 23.
+        minSdk = 24
         // Android 17. Google Play requires API 36+ for new apps and updates since 2026-08-31.
         targetSdk = 37
         versionCode = 2

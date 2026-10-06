@@ -17,7 +17,7 @@ lewat **Jetpack Media3** (ExoPlayer + `MediaSessionService`) lengkap dengan noti
 
 | | Versi |
 |---|---|
-| `minSdk` | 23 (Android 6.0) — minimum Media3, Firebase, Hilt, dan AndroidX saat ini |
+| `minSdk` | 24 (Android 7.0) — minimum Navigation 2.10 (Media3, Firebase, Hilt butuh 23) |
 | `targetSdk` / `compileSdk` | 37 (Android 17) — Google Play mewajibkan minimal API 36 sejak 31 Agustus 2026 |
 | Diuji otomatis (CI, emulator) | API 31 (Android 12, 2021) dan API 37 (Android 17, 2026) |
 
