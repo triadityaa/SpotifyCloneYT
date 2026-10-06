@@ -38,6 +38,12 @@ yes | "$SDKMANAGER" --install "$IMAGE" "emulator" "platform-tools" > /dev/null
 echo "no" | "$AVDMANAGER" create avd --force --name ci --package "$IMAGE"
 set -o pipefail
 
+# The default userdata partition of recent images is too small to install the APKs after the
+# first boot ("Requested internal only, but not enough space"), so give it 6 GB.
+AVD_CONFIG="$ANDROID_AVD_HOME/ci.avd/config.ini"
+sed -i '/^disk\.dataPartition\.size=/d' "$AVD_CONFIG"
+echo "disk.dataPartition.size=6442450944" >> "$AVD_CONFIG"
+
 echo "::group::Emulator diagnostics"
 ls -l /dev/kvm || true
 "$EMULATOR" -accel-check 2>&1 || true
@@ -87,6 +93,7 @@ sleep 15
 wait_for "system services were ready (second check)" is_ready 300
 echo "Emulator booted: Android $("$ADB" shell getprop ro.build.version.release | tr -d '\r')" \
   "(API $("$ADB" shell getprop ro.build.version.sdk | tr -d '\r'))"
+"$ADB" shell df -h /data || true
 
 "$ADB" shell settings put global window_animation_scale 0
 "$ADB" shell settings put global transition_animation_scale 0
