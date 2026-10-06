@@ -78,7 +78,9 @@ jobs:
   instrumented-tests:
     name: Instrumented tests (API ${{ matrix.api-level }})
     needs: build
-    runs-on: ubuntu-latest
+    # The API 37 emulator soft-reboots in a loop on ubuntu-24.04 hosts (SurfaceFlinger crash,
+    # https://issuetracker.google.com/issues/557246813); ubuntu-26.04 hosts are not affected.
+    runs-on: ${{ matrix.api-level == 37 && 'ubuntu-26.04' || 'ubuntu-latest' }}
     timeout-minutes: 60
     strategy:
       fail-fast: false

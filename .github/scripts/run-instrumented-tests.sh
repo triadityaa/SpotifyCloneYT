@@ -32,9 +32,18 @@ if [ -z "$IMAGE" ]; then
 fi
 echo "Using $IMAGE"
 
+# Older preinstalled cmdline-tools (e.g. 12.0 on ubuntu-24.04) don't handle "major.minor"
+# platform packages such as android-37.0 correctly, so create the AVD with the newest version.
+CMDLINE_TOOLS=$("$SDKMANAGER" --list 2>/dev/null \
+  | grep -oE "cmdline-tools;[0-9]+\.[0-9]+" | sort -uV | tail -n 1 || true)
+
 # `yes` is killed by SIGPIPE when sdkmanager exits, so only the last command's status counts here.
 set +o pipefail
-yes | "$SDKMANAGER" --install "$IMAGE" "emulator" "platform-tools" > /dev/null
+yes | "$SDKMANAGER" --install "$IMAGE" "emulator" "platform-tools" ${CMDLINE_TOOLS:+"$CMDLINE_TOOLS"} > /dev/null
+if [ -n "$CMDLINE_TOOLS" ] && [ -x "$SDK/cmdline-tools/${CMDLINE_TOOLS#cmdline-tools;}/bin/avdmanager" ]; then
+  AVDMANAGER="$SDK/cmdline-tools/${CMDLINE_TOOLS#cmdline-tools;}/bin/avdmanager"
+fi
+echo "Creating the AVD with $AVDMANAGER"
 echo "no" | "$AVDMANAGER" create avd --force --name ci --package "$IMAGE"
 set -o pipefail
 
@@ -52,7 +61,7 @@ df -h "$HOME" || true
 echo "::endgroup::"
 
 "$EMULATOR" -avd ci -no-window -no-audio -no-boot-anim -no-snapshot \
-  -gpu swiftshader_indirect -memory 4096 -camera-back none -camera-front none \
+  -gpu swiftshader_indirect -cores 4 -memory 4096 -camera-back none -camera-front none \
   > emulator.log 2>&1 &
 EMULATOR_PID=$!
 
@@ -62,10 +71,18 @@ is_booted() {
 
 # sys.boot_completed can be set before system_server is fully up (or survive a runtime
 # restart), so also require the package and activity managers to answer.
+is_user_unlocked() {
+  local ce_available
+  ce_available=$(timeout 30 "$ADB" shell getprop sys.user.0.ce_available 2>/dev/null | tr -d '\r')
+  { [ -z "$ce_available" ] || [ "$ce_available" = true ]; } &&
+    timeout 30 "$ADB" shell ls /sdcard/ > /dev/null 2>&1
+}
+
 is_ready() {
   is_booted &&
     timeout 30 "$ADB" shell pm path android 2>/dev/null | grep -q '^package:' &&
-    timeout 30 "$ADB" shell am get-current-user 2>/dev/null | tr -d '\r' | grep -qE '^[0-9]+$'
+    timeout 30 "$ADB" shell am get-current-user 2>/dev/null | tr -d '\r' | grep -qE '^[0-9]+$' &&
+    is_user_unlocked
 }
 
 # Polls the given check until it succeeds, failing fast if the emulator process exits.
@@ -87,6 +104,17 @@ wait_for() {
 }
 
 wait_for "the emulator booted" is_booted 900
+
+print_device_diagnostics() {
+  echo "::group::Crash buffer (logcat -b crash)"
+  timeout 30 "$ADB" logcat -d -b crash 2>/dev/null | tail -n 200 || true
+  echo "::endgroup::"
+  echo "::group::System log (restarts and fatal errors)"
+  timeout 30 "$ADB" logcat -d 2>/dev/null \
+    | grep -E "FATAL|Fatal signal|Abort message|SurfaceFlinger|Watchdog|system_server|Zygote" \
+    | tail -n 200 || true
+  echo "::endgroup::"
+}
 
 system_server_pid() {
   timeout 30 "$ADB" shell pidof system_server 2>/dev/null | tr -d '\r'
@@ -117,6 +145,7 @@ wait_for_stable_system() {
     if [ "$SECONDS" -ge "$deadline" ]; then
       echo "::error::system_server did not stay up for 60 seconds within 10 minutes."
       print_file emulator.log
+      print_device_diagnostics
       exit 1
     fi
     sleep 5
@@ -189,9 +218,7 @@ if [ "$GRADLE_STATUS" -ne 0 ] || [ "$RESULTS_STATUS" -ne 0 ]; then
   grep -E "AndroidRuntime|FATAL EXCEPTION|Fatal signal|crash_dump|Watchdog|system_server|Zygote|lowmemorykiller|spotifycloneyt|TestRunner|MediaSessionService" \
     logcat.txt | tail -n 300 || true
   echo "::endgroup::"
-  echo "::group::Crash buffer (logcat -b crash)"
-  timeout 30 "$ADB" logcat -d -b crash 2>/dev/null | tail -n 200 || true
-  echo "::endgroup::"
+  print_device_diagnostics
 fi
 
 "$ADB" emu kill || true
