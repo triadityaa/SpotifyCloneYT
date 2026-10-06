@@ -21,6 +21,7 @@
 
     <ImageView
         android:id="@+id/ivSongImage"
+        android:contentDescription="@string/content_description_song_image"
         android:layout_width="300dp"
         android:layout_height="300dp"
         android:background="@color/darkBackground"
@@ -63,6 +64,7 @@
 
     <ImageView
         android:id="@+id/ivPlayPauseDetail"
+        android:contentDescription="@string/content_description_play_pause"
         android:layout_width="75dp"
         android:layout_height="75dp"
         android:layout_marginTop="32dp"
@@ -75,6 +77,7 @@
 
     <ImageView
         android:id="@+id/ivSkipPrevious"
+        android:contentDescription="@string/content_description_skip_previous"
         android:layout_width="56dp"
         android:layout_height="56dp"
         android:layout_marginEnd="16dp"
@@ -85,6 +88,7 @@
 
     <ImageView
         android:id="@+id/ivSkip"
+        android:contentDescription="@string/content_description_skip_next"
         android:layout_width="56dp"
         android:layout_height="56dp"
         android:layout_marginStart="16dp"
