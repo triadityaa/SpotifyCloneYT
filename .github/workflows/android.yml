@@ -105,6 +105,7 @@ jobs:
         run: ./gradlew --stacktrace assembleDebug assembleDebugAndroidTest
 
       - name: Run instrumented tests on the emulator
+        timeout-minutes: 45
         run: .github/scripts/run-instrumented-tests.sh ${{ matrix.api-level }}
 
       - uses: actions/upload-artifact@v5
